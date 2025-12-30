@@ -82,30 +82,33 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         return None, "Мало свечей"
 
     closes = np.array([c["close"] for c in candles])
+    highs = np.array([c["high"] for c in candles])
+    lows = np.array([c["low"] for c in candles])
 
     indicators = {
         "rsi": compute_rsi(closes),
         "macd": compute_macd(closes),
         "bb": compute_bollinger(closes),
-        "ema": compute_ema(closes[-20:]),
-        "closes": closes
+        "ema": compute_ema(closes[-20:] if len(closes) >= 20 else closes),
+        "closes": closes,
+        "stoch": compute_stochastic(closes, highs, lows),
+        "adx": compute_adx_strength(highs, lows, closes)
     }
 
     features = build_features(candles, tf)
-
-    # Защита от пустого или некорректного массива фич
     if features is None or features.size == 0 or len(features) == 0:
-        # Дефолтная "нейтральная" свеча: маленький тело, нулевое направление, малая волатильность
         features = np.array([[0.1, 0.0, 0.1]])
+
     X = features[-1].reshape(1, -1)
     ml_prob = get_model(tf).predict_proba(X)[0][1]
 
     patterns, pattern_score = detect_patterns(candles)
-    trend_prob = trend_signal(candles)
-    regime = market_regime(candles)
 
     scalp_adj = scalping_strategy(indicators, patterns, regime)
     pattern_score = np.clip(pattern_score + scalp_adj, 0.0, 1.0)
+
+    trend_prob = trend_signal(candles)
+    regime = market_regime(candles)
 
     grok_prob = await call_grok(candles, patterns, regime, tf, symbol, indicators)
 

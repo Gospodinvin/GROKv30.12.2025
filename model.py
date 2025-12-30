@@ -1,32 +1,39 @@
+# model.py
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+import joblib
+import os
+import logging
 
 class CandleModel:
-    """
-    Улучшенная модель на RandomForest.
-    По умолчанию использует простую эвристику, но можно обучить на данных.
-    """
-    def __init__(self):
-        self.fallback = True
+    def __init__(self, tf: str):
+        self.tf = tf
+        self.model_path = f"models/model_{tf}m.joblib"
         self.model = None
+        self.fallback = True
+        self.load_model()
 
-    def fit(self, X, y):
-        if len(X) < 10:
-            return
-        self.model = RandomForestClassifier(n_estimators=200, max_depth=6, random_state=42)
-        self.model.fit(X, y)
-        self.fallback = False
+    def load_model(self):
+        if os.path.exists(self.model_path):
+            try:
+                self.model = joblib.load(self.model_path)
+                self.fallback = False
+                logging.info(f"Загружена обученная модель для {self.tf}m")
+            except Exception as e:
+                logging.error(f"Ошибка загрузки модели {self.tf}m: {e}")
+        else:
+            logging.info(f"Обученная модель для {self.tf}m не найдена — используется fallback")
 
     def predict_proba(self, X):
         if X.shape[0] == 0:
             return np.array([[0.5, 0.5]])
-        
+
         if not self.fallback and self.model is not None:
             return self.model.predict_proba(X)
-        
-        # Fallback эвристика
+
+        # Fallback (на всякий случай)
         momentum = X[:, 0]
         volatility = X[:, 2]
-        prob_up = 0.5 + 0.4 * momentum - 0.25 * volatility
+        prob_up = 0.5 + 0.4 * np.tanh(momentum) - 0.2 * volatility
         prob_up = np.clip(prob_up, 0.05, 0.95)
         return np.vstack([1 - prob_up, prob_up]).T

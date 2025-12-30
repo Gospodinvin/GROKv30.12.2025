@@ -2,7 +2,7 @@ import numpy as np
 
 def build_features(candles, tf):
     if len(candles) < 2:
-        return np.array([])  # Пустой массив, чтобы выше сработала защита
+        return np.array([])  # Защита от слишком короткой истории
 
     X = []
     scale = {"1": 1.0, "2": 1.2, "5": 1.5, "10": 2.0}.get(tf, 1.0)

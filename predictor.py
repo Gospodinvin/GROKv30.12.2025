@@ -11,41 +11,41 @@ from data_provider import get_candles
 from cv_extractor import extract_candles
 import numpy as np
 
-# Новый код: клиент для Grok API
+# Настройки Grok API
 XAI_API_KEY = os.getenv("XAI_API_KEY")
-GROK_MODEL = "grok-4"  # или "grok-beta", в зависимости от доступности на момент запуска
+GROK_MODEL = "grok-4"  # или "grok-beta" / "grok-4" в зависимости от доступности
 
 async def call_grok(candles: list, patterns: list, regime: str, tf: str, symbol: str) -> float:
     """
-    Асинхронный вызов Grok для получения вероятности роста.
-    Возвращает вероятность от 0.0 до 1.0.
+    Асинхронный запрос к Grok API для получения вероятности роста.
     """
     if not XAI_API_KEY:
-        logging.warning("XAI_API_KEY не задан — пропускаем вызов Grok")
+        logging.warning("XAI_API_KEY не задан — Grok отключён, возвращаем 0.5")
         return 0.5
 
-    # Берём последние 10 свечей для контекста (чтобы не превысить лимит токенов)
     recent_candles = candles[-10:]
     candle_desc = []
     for i, c in enumerate(recent_candles):
         direction = "🟢" if c["close"] > c["open"] else "🔴"
         body = abs(c["close"] - c["open"])
-        candle_desc.append(f"{i+1}: {direction} O:{c['open']:.4f} H:{c['high']:.4f} L:{c['low']:.4f} C:{c['close']:.4f} (body {body:.4f})")
+        candle_desc.append(
+            f"{i+1}: {direction} O:{c['open']:.4f} H:{c['high']:.4f} L:{c['low']:.4f} C:{c['close']:.4f} (body {body:.4f})"
+        )
 
     prompt = f"""
 Ты — эксперт по техническому анализу финансовых рынков.
 Инструмент: {symbol}
 Таймфрейм: {tf} минут
-Текущий режим рынка: {regime} ({'тренд' if regime == 'trend' else 'флэт' if regime == 'flat' else 'высокая волатильность'})
+Текущий режим рынка: {regime}
 
-Последние 10 свечей (нормализованные цены, от старых к новым):
-{chr(10).join(candle_desc)}
+Последние 10 свечей (нормализованные цены):
+{"\n".join(candle_desc)}
 
-Обнаруженные паттерны: {', '.join(patterns) if patterns else 'нет значимых'}
+Обнаруженные паттерны: {", ".join(patterns) if patterns else "нет"}
 
-На основе этого анализа дай вероятность роста цены на следующие 2–3 свечи (на том же таймфрейме).
-Ответь ТОЛЬКО одним числом от 0.00 до 1.00 (например: 0.72).
-Не добавляй пояснений, символов или текста.
+Дай вероятность роста цены на следующие 2–3 свечи.
+Ответь ТОЛЬКО одним числом от 0.00 до 1.00 (например: 0.68).
+Без текста, пояснений и символов.
 """
 
     try:
@@ -59,32 +59,36 @@ async def call_grok(candles: list, patterns: list, regime: str, tf: str, symbol:
                 json={
                     "model": GROK_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,  # низкая для стабильности
+                    "temperature": 0.3,
                     "max_tokens": 10
                 }
             )
 
             if response.status_code == 200:
                 text = response.json()["choices"][0]["message"]["content"].strip()
-                # Извлекаем число
-                prob = float(text)
-                if 0.0 <= prob <= 1.0:
-                    logging.info(f"Grok вернул вероятность: {prob:.3f}")
-                    return prob
-                else:
-                    logging.warning(f"Grok вернул некорректное значение: {text}")
-                    return 0.5
+                try:
+                    prob = float(text)
+                    if 0.0 <= prob <= 1.0:
+                        logging.info(f"Grok вернул вероятность: {prob:.3f}")
+                        return prob
+                except ValueError:
+                    pass
+                logging.warning(f"Grok вернул некорректный формат: '{text}'")
             else:
-                logging.error(f"Grok API error {response.status_code}: {response.text}")
-                return 0.5
+                logging.error(f"Grok API ошибка {response.status_code}: {response.text}")
 
     except Exception as e:
-        logging.error(f"Ошибка вызова Grok: {e}")
-        return 0.5
+        logging.error(f"Ошибка при запросе к Grok: {e}")
 
-async def analyze(image_bytes=None, tf=None, symbol=None):  # <-- Сделали async
-    logging.debug(f"Starting analyze: image_bytes={bool(image_bytes)}, tf={tf}, symbol={symbol}")
-    
+    return 0.5  # fallback
+
+
+async def analyze(image_bytes=None, tf=None, symbol=None):
+    """
+    Основная функция анализа — теперь полностью асинхронная.
+    """
+    logging.debug(f"Запуск анализа: image={bool(image_bytes)}, tf={tf}, symbol={symbol}")
+
     if image_bytes:
         candles, quality = extract_candles(image_bytes, max_candles=70)
         source = "скриншот графика"
@@ -95,21 +99,17 @@ async def analyze(image_bytes=None, tf=None, symbol=None):  # <-- Сделали
             source = "Twelve Data / Binance API"
             logging.debug(f"Получено {len(candles)} свечей из API")
         except Exception as e:
-            logging.error(f"Ошибка получения данных в analyze: {str(e)}")
+            logging.error(f"Ошибка получения данных: {e}")
             return None, f"Ошибка получения данных: {str(e)}"
         quality = 1.0
 
     if len(candles) < 5:
-        logging.warning(f"Недостаточно свечей: {len(candles)}")
         return None, "Недостаточно свечей для анализа (минимум 5)"
 
     features = build_features(candles, tf)
-    logging.debug(f"Построено {len(features)} признаков")
     if len(features) == 0:
-        features = np.array([[0.1, 0, 0.1]])  # экстренный fallback
-        logging.warning("Fallback features used")
-    if features.shape[0] == 0:  # Дополнительная проверка
-        return None, "Не удалось построить признаки (нет свечей)"
+        features = np.array([[0.1, 0, 0.1]])
+        logging.warning("Использованы fallback-признаки")
     X = features[-1].reshape(1, -1)
 
     model = get_model(tf)
@@ -119,16 +119,16 @@ async def analyze(image_bytes=None, tf=None, symbol=None):  # <-- Сделали
     trend_prob = trend_signal(candles)
     regime = market_regime(candles)
 
-    # Вызов Grok теперь await (без asyncio.run)
+    # Асинхронный вызов Grok
     grok_prob = await call_grok(candles, patterns, regime, tf, symbol)
 
-    # Адаптивные веса с учётом Grok
+    # Адаптивные веса
     if regime == "trend":
-        weights = [0.35, 0.15, 0.25, 0.25]  # больше веса ML и Grok
+        weights = [0.35, 0.15, 0.25, 0.25]
     elif regime == "flat":
-        weights = [0.15, 0.40, 0.20, 0.25]  # больше паттернам и Grok
+        weights = [0.15, 0.40, 0.20, 0.25]
     else:
-        weights = [0.25, 0.25, 0.25, 0.25]  # равномерно
+        weights = [0.25, 0.25, 0.25, 0.25]
 
     final_prob = np.dot(weights, [ml_prob, pattern_score, trend_prob, grok_prob])
 

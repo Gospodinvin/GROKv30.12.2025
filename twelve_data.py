@@ -13,6 +13,11 @@ class TwelveDataClient:
     def get_candles(self, symbol: str, interval: str, outputsize: int = 50) -> Optional[List[Dict]]:
         """Получить свечи для символа и таймфрейма"""
         try:
+            # Поддержка Forex формата
+            if '/' not in symbol and 'USD' in symbol.upper():
+                symbol = symbol.upper().replace("USD", "/USD")
+                logging.debug(f"Исправленный символ для Forex: {symbol}")
+
             url = f"{self.base_url}/time_series"
             params = {
                 "symbol": symbol,
@@ -51,7 +56,7 @@ class TwelveDataClient:
             return candles[::-1]  # последние в конце
             
         except Exception as e:
-            logging.error(f"Twelve Data API error: {e}")
+            logging.error(f"Twelve Data API error for {symbol}: {e}")
             return None
 
 # Глобальный клиент

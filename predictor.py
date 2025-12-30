@@ -82,8 +82,7 @@ async def call_grok(candles: list, patterns: list, regime: str, tf: str, symbol:
         logging.error(f"Ошибка вызова Grok: {e}")
         return 0.5
 
-
-def analyze(image_bytes=None, tf=None, symbol=None):
+async def analyze(image_bytes=None, tf=None, symbol=None):  # <-- Сделали async
     logging.debug(f"Starting analyze: image_bytes={bool(image_bytes)}, tf={tf}, symbol={symbol}")
     
     if image_bytes:
@@ -101,11 +100,16 @@ def analyze(image_bytes=None, tf=None, symbol=None):
         quality = 1.0
 
     if len(candles) < 5:
+        logging.warning(f"Недостаточно свечей: {len(candles)}")
         return None, "Недостаточно свечей для анализа (минимум 5)"
 
     features = build_features(candles, tf)
+    logging.debug(f"Построено {len(features)} признаков")
     if len(features) == 0:
-        features = np.array([[0.1, 0, 0.1]])
+        features = np.array([[0.1, 0, 0.1]])  # экстренный fallback
+        logging.warning("Fallback features used")
+    if features.shape[0] == 0:  # Дополнительная проверка
+        return None, "Не удалось построить признаки (нет свечей)"
     X = features[-1].reshape(1, -1)
 
     model = get_model(tf)
@@ -115,10 +119,8 @@ def analyze(image_bytes=None, tf=None, symbol=None):
     trend_prob = trend_signal(candles)
     regime = market_regime(candles)
 
-    # Новый вызов Grok (асинхронно — но в текущем контексте aiogram использует sync)
-    # Поэтому делаем блокирующий вызов через asyncio.run (допустимо в боте)
-    import asyncio
-    grok_prob = asyncio.run(call_grok(candles, patterns, regime, tf, symbol))
+    # Вызов Grok теперь await (без asyncio.run)
+    grok_prob = await call_grok(candles, patterns, regime, tf, symbol)
 
     # Адаптивные веса с учётом Grok
     if regime == "trend":

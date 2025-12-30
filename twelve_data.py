@@ -12,11 +12,6 @@ class TwelveDataClient:
 
     def get_candles(self, symbol: str, interval: str, outputsize: int = 50) -> Optional[List[Dict]]:
         try:
-            # Автоматическая коррекция формата символа для Forex
-            if '/' not in symbol and symbol.endswith('USD'):
-                symbol = symbol[:-3] + '/USD'  # AUDUSD → AUD/USD
-                logging.debug(f"Автоматически исправлен символ для Forex: {symbol}")
-
             url = f"{self.base_url}/time_series"
             params = {
                 "symbol": symbol,
@@ -42,15 +37,6 @@ class TwelveDataClient:
                     "close": float(candle["close"]),
                     "volume": float(candle.get("volume", 0))
                 })
-            
-            # Нормализация цен для совместимости с CV-экстрактором
-            max_price = max(c["high"] for c in candles) if candles else 1.0
-            if max_price > 0:
-                for candle in candles:
-                    candle["open"] /= max_price
-                    candle["high"] /= max_price
-                    candle["low"] /= max_price
-                    candle["close"] /= max_price
             
             return candles[::-1]  # от старых к новым
             

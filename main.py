@@ -84,30 +84,50 @@ async def callback_handler(cb: CallbackQuery):
     await cb.answer("Неизвестно")
 
 async def send_result(message: Message, res: dict):
-    growth = int(res["prob"] * 100)
-    down = int(res["down_prob"] * 100)
+    prob = res["prob"]
+    growth_percent = int(prob * 100)
+    down_percent = 100 - growth_percent
+
+    # Определяем рекомендацию
+    if prob >= 0.65:
+        recommendation = "🟢 **BUY** (Покупать)"
+        color = "🟢"
+    elif prob <= 0.35:
+        recommendation = "🔴 **SELL** (Продавать)"
+        color = "🔴"
+    else:
+        recommendation = "⚪ **HOLD** (Держать / Наблюдать)"
+        color = "⚪"
+
     txt = (
-        f"📊 {res['symbol']} | {res['tf']} мин\n"
-        f"Рост (2–3 свечи): {growth}%\n"
-        f"Падение: {down}%\n"
-        f"Уверенность: {res['confidence']} ({res['confidence_score']})\n"
+        f"📊 **{res['symbol']} | {res['tf']} мин**\n\n"
+        f"{color} **Рекомендация:** {recommendation}\n"
+        f"Рост (2–3 свечи): **{growth_percent}%**\n"
+        f"Падение: **{down_percent}%**\n"
+        f"Уверенность: **{res['confidence']}** ({res['confidence_score']})\n"
+        f"Режим рынка: {res['regime'].capitalize()}\n"
         f"Источник: {res['source']}\n"
     )
+
     if res.get("quality", 1.0) < 0.9:
-        txt += f"Качество скрина: {res['quality']:.2f}\n"
+        txt += f"⚠ Качество скрина: {res['quality']:.2f} (может влиять на точность)\n"
+
     if res["patterns"]:
-        txt += "Паттерны: " + ", ".join(res["patterns"]) + "\n"
+        txt += f"🔥 Паттерны: {', '.join(res['patterns'])}\n"
 
     ind = res.get("indicators", {})
     txt += (
-        f"\nИндикаторы:\n"
-        f"RSI: {ind.get('rsi', 50):.1f}\n"
-        f"MACD: {ind.get('macd', 0):.5f}\n"
-        f"Bollinger: {ind.get('bb', 'neutral')}\n"
-        f"EMA(9): {ind.get('ema', 0):.5f}\n"
+        f"\n📈 Индикаторы:\n"
+        f"• RSI: {ind.get('rsi', 50):.1f}\n"
+        f"• Stoch: {ind.get('stoch', 50):.1f}\n"
+        f"• ADX (сила тренда): {ind.get('adx', 20):.1f}\n"
+        f"• MACD: {ind.get('macd', 0):.5f}\n"
+        f"• Bollinger: {ind.get('bb', 'neutral').capitalize()}\n"
     )
-    txt += "\n⚠ Не финансовая рекомендация!"
-    await message.answer(txt)
+
+    txt += "\n⚠ **Не финансовая рекомендация! Торгуйте на свой страх и риск.**"
+
+    await message.answer(txt, parse_mode="Markdown")
 
 def main():
     bot = Bot(TELEGRAM_BOT_TOKEN)
@@ -120,3 +140,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

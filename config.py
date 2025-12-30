@@ -1,7 +1,7 @@
 import os
 import logging
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG").upper()  # Изменено на DEBUG для лучших логов
 
 logging.basicConfig(
     level=LOG_LEVEL,

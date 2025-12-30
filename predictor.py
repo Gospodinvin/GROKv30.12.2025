@@ -27,22 +27,30 @@ async def call_grok(candles, patterns, regime, tf, symbol, indicators):
         desc.append(f"{i+1}: {dir_} O:{c['open']:.4f} H:{c['high']:.4f} L:{c['low']:.4f} C:{c['close']:.4f} (body {body:.4f})")
 
     ind_desc = (
-        f"RSI: {indicators['rsi']:.2f}\n"
+        f"RSI: {indicators['rsi']:.1f}\n"
+        f"Stoch: {indicators.get('stoch', 50):.1f}\n"
+        f"ADX: {indicators.get('adx', 20):.1f}\n"
         f"MACD: {indicators['macd']:.5f}\n"
         f"Bollinger: {indicators['bb']}\n"
         f"EMA9: {indicators['ema']:.5f}"
     )
 
-    prompt = f"""
-Эксперт по скальпингу.
-{symbol} | {tf} мин | Режим: {regime}
+    prompt = f"""Ты — профессиональный скальпер на Forex и крипте.
+
+Примеры:
+1. RSI=27, Stoch=18, паттерн=Hammer, тренд вверх → вероятность роста 0.78
+2. RSI=73, Stoch=85, паттерн=Shooting Star, тренд вниз → вероятность роста 0.25
+3. Doji в боковике, RSI=48 → вероятность роста 0.50
+
+Теперь анализируй:
+{symbol} {tf}мин | Режим: {regime}
 Свечи:
 {"\n".join(desc)}
 Паттерны: {", ".join(patterns) or "нет"}
 Индикаторы:
 {ind_desc}
-Вероятность роста на 2-3 свечи? Ответь только числом 0.00-1.00
-"""
+
+Вероятность роста цены на 2–3 свечи вперёд? Ответь ТОЛЬКО числом от 0.00 до 1.00"""
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -138,4 +146,5 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         "quality": quality,
         "indicators": indicators
     }, None
+
 

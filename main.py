@@ -92,18 +92,22 @@ async def callback_handler(cb: CallbackQuery):
         res = None
         err = None
 
-        if mode == "image":
-            if img_data:
-                res, err = analyze(image_bytes=img_data, tf=tf)
+        try:  # Добавлен try для ловли любых ошибок в analyze
+            if mode == "image":
+                if img_data:
+                    res, err = analyze(image_bytes=img_data, tf=tf)
+                else:
+                    err = "Скриншот не найден. Пришлите новый."
+            elif mode == "api":
+                if symbol:
+                    res, err = analyze(tf=tf, symbol=symbol)
+                else:
+                    err = "Тикер не выбран. Начните заново."
             else:
-                err = "Скриншот не найден. Пришлите новый."
-        elif mode == "api":
-            if symbol:
-                res, err = analyze(tf=tf, symbol=symbol)
-            else:
-                err = "Тикер не выбран. Начните заново."
-        else:
-            err = "Неизвестный режим. Начните с /start."
+                err = "Неизвестный режим. Начните с /start."
+        except Exception as e:
+            logging.error(f"Ошибка в analyze: {str(e)}")
+            err = f"Внутренняя ошибка анализа: {str(e)}"
 
         if err:
             await cb.message.answer(f"❌ {err}\n\nНачните заново:", reply_markup=market_keyboard())

@@ -11,12 +11,11 @@ class TwelveDataClient:
         self.session.params = {"apikey": api_key}
 
     def get_candles(self, symbol: str, interval: str, outputsize: int = 50) -> Optional[List[Dict]]:
-        """Получить свечи для символа и таймфрейма"""
         try:
-            # Поддержка Forex формата
-            if '/' not in symbol and 'USD' in symbol.upper():
-                symbol = symbol.upper().replace("USD", "/USD")
-                logging.debug(f"Исправленный символ для Forex: {symbol}")
+            # Автоматическая коррекция формата символа для Forex
+            if '/' not in symbol and symbol.endswith('USD'):
+                symbol = symbol[:-3] + '/USD'  # AUDUSD → AUD/USD
+                logging.debug(f"Автоматически исправлен символ для Forex: {symbol}")
 
             url = f"{self.base_url}/time_series"
             params = {
@@ -26,15 +25,14 @@ class TwelveDataClient:
                 "format": "JSON"
             }
             
-            response = self.session.get(url, params=params)
+            response = self.session.get(url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()
-            if "values" not in data:
-                logging.warning(f"No data for {symbol} {interval}: {data}")
+            if "values" not in data or not data["values"]:
+                logging.warning(f"Нет данных для {symbol} {interval}: {data.get('message', 'пустой ответ')}")
                 return None
                 
-            # Парсим в формат свечей бота
             candles = []
             for candle in data["values"][:outputsize]:
                 candles.append({
@@ -45,18 +43,22 @@ class TwelveDataClient:
                     "volume": float(candle.get("volume", 0))
                 })
             
-            # Нормализуем цены (делим на max для совместимости с CV)
+            # Нормализация цен для совместимости с CV-экстрактором
             max_price = max(c["high"] for c in candles) if candles else 1.0
-            for candle in candles:
-                candle["open"] /= max_price
-                candle["high"] /= max_price
-                candle["low"] /= max_price
-                candle["close"] /= max_price
+            if max_price > 0:
+                for candle in candles:
+                    candle["open"] /= max_price
+                    candle["high"] /= max_price
+                    candle["low"] /= max_price
+                    candle["close"] /= max_price
             
-            return candles[::-1]  # последние в конце
+            return candles[::-1]  # от старых к новым
             
+        except requests.exceptions.HTTPError as http_err:
+            logging.error(f"Twelve Data HTTP error для {symbol} {interval}: {http_err} | {response.text}")
+            return None
         except Exception as e:
-            logging.error(f"Twelve Data API error for {symbol}: {e}")
+            logging.error(f"Twelve Data unexpected error для {symbol} {interval}: {e}")
             return None
 
 # Глобальный клиент
@@ -68,6 +70,6 @@ def get_client() -> Optional[TwelveDataClient]:
         try:
             client = TwelveDataClient(TWELVE_DATA_API_KEY)
         except Exception as e:
-            logging.error(f"Failed to create TwelveDataClient: {e}")
-            client = "error"  # Чтобы не пытаться снова
+            logging.error(f"Не удалось создать TwelveDataClient: {e}")
+            client = "error"
     return client if client != "error" else None

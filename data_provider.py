@@ -1,0 +1,31 @@
+# data_provider.py  (НОВЫЙ ФАЙЛ — единая точка получения свечей)
+from binance_data import get_candles as get_candles_binance
+from twelve_data import get_client
+import logging
+
+def get_candles(symbol: str, interval: str = "1m", limit: int = 70):
+    """
+    Универсальная функция получения свечей.
+    Сначала пытается Twelve Data (для всех рынков), потом Binance (для крипты).
+    """
+    symbol = symbol.upper().replace("USD", "USDT")  # унификация
+
+    client = get_client()
+    if client:
+        logging.info(f"Пытаемся получить {symbol} {interval} через Twelve Data...")
+        candles = client.get_candles(symbol=symbol, interval=interval, outputsize=limit)
+        if candles:
+            logging.info(f"Успешно получены данные через Twelve Data ({len(candles)} свечей)")
+            return candles
+
+        logging.warning(f"Twelve Data не вернул данные для {symbol}, пробуем Binance...")
+
+    # Fallback на Binance
+    logging.info(f"Пытаемся получить {symbol} {interval} через Binance...")
+    try:
+        candles = get_candles_binance(symbol, interval=interval, limit=limit)
+        logging.info(f"Успешно получены данные через Binance ({len(candles)} свечей)")
+        return candles
+    except Exception as e:
+        logging.error(f"Оба источника не сработали для {symbol}: {e}")
+        raise RuntimeError("Не удалось получить данные ни с Twelve Data, ни с Binance")

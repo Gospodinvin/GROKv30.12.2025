@@ -1,4 +1,5 @@
 import numpy as np
+from trend import trend_signal  # добавляем импорт
 
 def detect_patterns(candles):
     patterns = []
@@ -84,4 +85,12 @@ def detect_patterns(candles):
             score += 0.20
 
     patterns = list(set(patterns))
+
+    # Улучшение: усиление паттернов в соответствии с трендом
+    trend_prob = trend_signal(candles)
+    if trend_prob > 0.65 and any("bull" in p.lower() or "hammer" in p.lower() or "morning" in p.lower() for p in patterns):
+        score = min(score * 1.3, 1.0)
+    elif trend_prob < 0.35 and any("bear" in p.lower() or "shooting" in p.lower() or "evening" in p.lower() for p in patterns):
+        score = min(score * 1.3, 1.0)
+
     return patterns, min(score, 1.0)

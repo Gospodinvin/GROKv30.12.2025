@@ -8,8 +8,10 @@ from model_registry import get_model
 from data_provider import get_candles
 from cv_extractor import extract_candles
 import numpy as np
+import logging
 
 def analyze(image_bytes=None, tf=None, symbol=None):
+    logging.debug(f"Starting analyze: image_bytes={bool(image_bytes)}, tf={tf}, symbol={symbol}")
     if image_bytes:
         # Режим по скриншоту
         candles, quality = extract_candles(image_bytes, max_candles=70)
@@ -20,18 +22,25 @@ def analyze(image_bytes=None, tf=None, symbol=None):
         try:
             candles = get_candles(symbol, interval=f"{tf}m", limit=70)
             source = "Twelve Data / Binance API"
+            logging.debug(f"Получено {len(candles)} свечей из API")
         except Exception as e:
+            logging.error(f"Ошибка получения данных в analyze: {str(e)}")
             return None, f"Ошибка получения данных: {str(e)}"
 
         quality = 1.0
 
     if len(candles) < 5:
+        logging.warning(f"Недостаточно свечей: {len(candles)}")
         return None, "Недостаточно свечей для анализа (минимум 5)"
 
     # Признаки строим по всем свечам, но предсказываем по последней завершённой
     features = build_features(candles, tf)
+    logging.debug(f"Построено {len(features)} признаков")
     if len(features) == 0:
         features = np.array([[0.1, 0, 0.1]])  # экстренный fallback
+        logging.warning("Fallback features used")
+    if features.shape[0] == 0:  # Дополнительная проверка
+        return None, "Не удалось построить признаки (нет свечей)"
     X = features[-1].reshape(1, -1)
 
     model = get_model(tf)

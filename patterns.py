@@ -2,21 +2,19 @@ import numpy as np
 
 def detect_patterns(candles):
     patterns = []
-    if len(candles) < 3:
-        return patterns, 0.0
-
     score = 0.0
-    for i in range(-3, 0):  # последние 3 свечи
+    if len(candles) < 3:
+        return patterns, score
+
+    for i in range(-3, 0):
         prev = candles[i-1] if i > -3 else candles[0]
         c = candles[i]
-
-        o, c_, h, l = c["open"], c["close"], c["high"], c["low"]
-        body = abs(c_ - o)
+        o, cl, h, l = c["open"], c["close"], c["high"], c["low"]
+        body = abs(cl - o)
         range_ = h - l
-        upper_wick = h - max(o, c_)
-        lower_wick = min(o, c_) - l
-
-        direction = 1 if c_ > o else -1
+        upper_wick = h - max(o, cl)
+        lower_wick = min(o, cl) - l
+        direction = 1 if cl > o else -1
 
         # Engulfing
         if i > -3:
@@ -25,7 +23,7 @@ def detect_patterns(candles):
                 patterns.append("Engulfing")
                 score += 0.25
 
-        # Marubozu / Impulse
+        # Marubozu
         if body > range_ * 0.85:
             patterns.append("Marubozu")
             score += 0.20
@@ -44,6 +42,46 @@ def detect_patterns(candles):
         if body < range_ * 0.1:
             patterns.append("Doji")
             score += 0.10
+
+    # 3-свечные
+    if len(candles) >= 3:
+        c1, c2, c3 = candles[-3], candles[-2], candles[-1]
+
+        # Morning Star
+        if (c1["close"] < c1["open"] and
+            abs(c2["close"] - c2["open"]) < abs(c1["close"] - c1["open"]) * 0.3 and
+            c3["close"] > c3["open"] and
+            c3["close"] > (c1["open"] + c1["close"]) / 2):
+            patterns.append("Morning Star")
+            score += 0.28
+
+        # Evening Star
+        if (c1["close"] > c1["open"] and
+            abs(c2["close"] - c2["open"]) < abs(c1["close"] - c1["open"]) * 0.3 and
+            c3["close"] < c3["open"] and
+            c3["close"] < (c1["open"] + c1["close"]) / 2):
+            patterns.append("Evening Star")
+            score += 0.28
+
+        # Three White Soldiers
+        if all(c["close"] > c["open"] for c in [c1, c2, c3]) and c2["close"] > c1["close"] and c3["close"] > c2["close"]:
+            patterns.append("Three White Soldiers")
+            score += 0.30
+
+        # Three Black Crows
+        if all(c["close"] < c["open"] for c in [c1, c2, c3]) and c2["close"] < c1["close"] and c3["close"] < c2["close"]:
+            patterns.append("Three Black Crows")
+            score += 0.30
+
+        # Bullish Harami
+        if c1["close"] < c1["open"] and c3["close"] > c3["open"] and c3["open"] > c1["close"] and c3["close"] < c1["open"]:
+            patterns.append("Bullish Harami")
+            score += 0.20
+
+        # Bearish Harami
+        if c1["close"] > c1["open"] and c3["close"] < c3["open"] and c3["open"] < c1["close"] and c3["close"] > c1["open"]:
+            patterns.append("Bearish Harami")
+            score += 0.20
 
     patterns = list(set(patterns))
     return patterns, min(score, 1.0)

@@ -1,6 +1,8 @@
 import httpx
 import os
 import logging
+import numpy as np
+
 from features import build_features
 from patterns import detect_patterns
 from trend import trend_signal, market_regime
@@ -8,8 +10,16 @@ from confidence import confidence_from_probs
 from model_registry import get_model
 from data_provider import get_candles
 from cv_extractor import extract_candles
-from indicators import compute_rsi, compute_macd, compute_bollinger, compute_ema, scalping_strategy
-import numpy as np
+# Исправленный импорт — добавлены compute_stochastic и compute_adx_strength
+from indicators import (
+    compute_rsi,
+    compute_macd,
+    compute_bollinger,
+    compute_ema,
+    compute_stochastic,
+    compute_adx_strength,
+    scalping_strategy
+)
 
 XAI_API_KEY = os.getenv("XAI_API_KEY")
 GROK_MODEL = "grok-4"
@@ -57,30 +67,46 @@ async def call_grok(candles, patterns, regime, tf, symbol, indicators):
             resp = await client.post(
                 "https://api.x.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
-                json={"model": GROK_MODEL, "messages": [{"role": "user", "content": prompt}],
-                      "temperature": 0.3, "max_tokens": 10}
+                json={
+                    "model": GROK_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 10
+                }
             )
             if resp.status_code == 200:
-                text = resp.json()["choices"][0]["message"]["content"].strip()
+                content = resp.json()["choices"][0]["message"]["content"].strip()
                 try:
-                    prob = float(text)
-                    if 0 <= prob <= 1:
-                        return prob
-                except:
-                    pass
+                    return float(content)
+                except ValueError:
+                    logging.warning(f"Grok вернул не число: {content}")
+                    return 0.5
+            else:
+                logging.error(f"Grok API error: {resp.status_code} {resp.text}")
     except Exception as e:
-        logging.error(f"Grok error: {e}")
+        logging.error(f"Ошибка вызова Grok: {e}")
 
     return 0.5
 
+
 async def analyze(image_bytes=None, tf=None, symbol=None):
+    quality = 1.0
+    source = "CV-экстрактор"
+
     if image_bytes:
-        candles, quality = extract_candles(image_bytes, max_candles=70)
-        source = "скриншот"
-        symbol = symbol or "Неизвестно"
-    else:
         try:
-            candles = get_candles(symbol, interval=f"{tf}m", limit=70)
+            candles, quality = extract_candles(image_bytes)
+            if not candles:
+                return None, "Не удалось обнаружить свечи на изображении"
+            source = "Скриншот"
+        except Exception as e:
+            return None, f"Ошибка обработки изображения: {str(e)}"
+    else:
+        if not symbol or not tf:
+            return None, "Не указан символ или таймфрейм"
+        try:
+            interval = f"{tf}m" if tf in ["1", "2", "5", "10"] else "1h"  # пример
+            candles = get_candles(symbol, interval=interval, limit=70)
             source = "Twelve Data / Binance"
         except Exception as e:
             return None, str(e)
@@ -112,16 +138,17 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
 
     patterns, pattern_score = detect_patterns(candles)
 
+    regime = market_regime(candles)
     scalp_adj = scalping_strategy(indicators, patterns, regime)
     pattern_score = np.clip(pattern_score + scalp_adj, 0.0, 1.0)
 
     trend_prob = trend_signal(candles)
-    regime = market_regime(candles)
 
-    grok_prob = await call_grok(candles, patterns, regime, tf, symbol, indicators)
+    grok_prob = await call_grok(candles, patterns, regime, tf, symbol or "Неизвестно", indicators)
 
+    # Взвешивание вероятностей
     if int(tf or 0) <= 5:
-        weights = [0.20, 0.30, 0.20, 0.30]
+        weights = [0.20, 0.30, 0.20, 0.30]  # ml, patterns, trend, grok
     elif regime == "trend":
         weights = [0.30, 0.25, 0.20, 0.25]
     elif regime == "flat":
@@ -141,10 +168,8 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         "regime": regime,
         "patterns": patterns,
         "tf": tf,
-        "symbol": symbol,
+        "symbol": symbol or "Скриншот",
         "source": source,
         "quality": quality,
         "indicators": indicators
     }, None
-
-

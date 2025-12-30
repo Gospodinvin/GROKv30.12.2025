@@ -91,7 +91,12 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         "closes": closes
     }
 
-    features = build_features(candles, tf) or np.array([[0.1, 0, 0.1]])
+    features = build_features(candles, tf)
+
+    # Защита от пустого или некорректного массива фич
+    if features is None or features.size == 0 or len(features) == 0:
+        # Дефолтная "нейтральная" свеча: маленький тело, нулевое направление, малая волатильность
+        features = np.array([[0.1, 0.0, 0.1]])
     X = features[-1].reshape(1, -1)
     ml_prob = get_model(tf).predict_proba(X)[0][1]
 
@@ -130,3 +135,4 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         "quality": quality,
         "indicators": indicators
     }, None
+

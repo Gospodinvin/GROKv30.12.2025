@@ -10,19 +10,19 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-# Исправленный импорт
+# Теперь импортируем правильно и используем символы с USD (как в боте)
 from binance_data import get_candles as get_candles_binance
 
 # Таймфреймы
 TIMEFRAMES = ["1", "2", "5", "10"]
 INTERVALS = {"1": "1m", "2": "2m", "5": "5m", "10": "10m"}
 
-# Больше пар для лучшего обучения
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"]
+# Символы в формате, как в твоём боте: с USD (функция в binance_data.py сама заменит на USDT)
+SYMBOLS = ["BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "XRPUSD", "ADAUSD", "DOGEUSD"]
 
-LIMIT = 5000  # ~3-5 месяцев на 1m
+LIMIT = 5000  # ~3–5 месяцев на 1m
 
-PROFIT_THRESHOLD = 0.18  # чуть повыше, чтобы сигналы были качественнее
+PROFIT_THRESHOLD = 0.18  # 0.18% за 2–3 свечи — хороший фильтр для скальпинга
 
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -49,8 +49,8 @@ def prepare_data(candles, tf):
         current = df.iloc[i + 1]
         future_close = df.iloc[i + 3]["close"]
 
-        price_change = (future_close - current["close"]) / current["close"] * 100
-        label = 1 if price_change > PROFIT_THRESHOLD else 0
+        price_change_pct = (future_close - current["close"]) / current["close"] * 100
+        label = 1 if price_change_pct > PROFIT_THRESHOLD else 0
 
         prev = df.iloc[i]
         features = build_features_single(prev, current, scale)
@@ -71,8 +71,10 @@ def train_and_save():
         for symbol in SYMBOLS:
             try:
                 logging.info(f"Загрузка {symbol} {interval}...")
+                # Здесь binance_data.py сам заменит USD → USDT
                 candles = get_candles_binance(symbol, interval=interval, limit=LIMIT)
                 if len(candles) < 100:
+                    print(f"  {symbol}: мало свечей ({len(candles)})")
                     continue
 
                 X, y = prepare_data(candles, tf)
@@ -82,6 +84,7 @@ def train_and_save():
                     print(f"  {symbol}: +{len(X)} примеров (всего: {len(all_X)})")
             except Exception as e:
                 logging.error(f"Ошибка с {symbol}: {e}")
+                print(f"  {symbol}: ошибка — {e}")
 
         if len(all_X) < 500:
             print(f"Недостаточно данных для {tf}m — пропускаем")
@@ -91,16 +94,16 @@ def train_and_save():
         y = np.array(all_y)
 
         # Балансировка классов
-        pos_idx = y == 1
-        neg_idx = y == 0
-        if pos_idx.sum() < neg_idx.sum():
-            X_pos = resample(X[pos_idx], replace=True, n_samples=neg_idx.sum(), random_state=42)
-            X_bal = np.vstack((X_pos, X[neg_idx]))
-            y_bal = np.array([1] * neg_idx.sum() + [0] * neg_idx.sum())
+        pos_count = np.sum(y == 1)
+        neg_count = np.sum(y == 0)
+        if pos_count < neg_count:
+            X_pos = resample(X[y == 1], replace=True, n_samples=neg_count, random_state=42)
+            X_bal = np.vstack((X_pos, X[y == 0]))
+            y_bal = np.concatenate(([1] * neg_count, [0] * neg_count))
         else:
-            X_neg = resample(X[neg_idx], replace=True, n_samples=pos_idx.sum(), random_state=42)
-            X_bal = np.vstack((X[pos_idx], X_neg))
-            y_bal = np.array([1] * pos_idx.sum() + [0] * pos_idx.sum())
+            X_neg = resample(X[y == 0], replace=True, n_samples=pos_count, random_state=42)
+            X_bal = np.vstack((X[y == 1], X_neg))
+            y_bal = np.concatenate(([1] * pos_count, [0] * pos_count))
 
         # Обучение
         model = RandomForestClassifier(
@@ -114,15 +117,15 @@ def train_and_save():
         model.fit(X_bal, y_bal)
 
         preds = model.predict(X_bal)
-        print(f"\n{tf}m — Результат на обучающей выборке:")
+        print(f"\n{tf}m — Результат (на обучающей выборке):")
         print(classification_report(y_bal, preds))
 
         # Сохранение
         path = os.path.join(MODEL_DIR, f"model_{tf}m.joblib")
         joblib.dump(model, path)
-        print(f"Модель сохранена: {path}")
+        print(f"Модель сохранена: {path}\n")
 
-    print("\nОбучение всех моделей завершено!")
+    print("Обучение всех моделей завершено! Модели лежат в папке 'models/'")
 
 
 if __name__ == "__main__":

@@ -3,27 +3,27 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
+from sklearn.utils import resample
 import joblib
 import os
-from binance_data import get_candles_binance
 import logging
 
 logging.basicConfig(level=logging.INFO)
 
-# Таймфреймы для обучения
+# Исправленный импорт
+from binance_data import get_candles as get_candles_binance
+
+# Таймфреймы
 TIMEFRAMES = ["1", "2", "5", "10"]
 INTERVALS = {"1": "1m", "2": "2m", "5": "5m", "10": "10m"}
 
-# Символы для обучения (можно добавить больше)
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
+# Больше пар для лучшего обучения
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"]
 
-# Сколько свечей брать для обучения
-LIMIT = 5000  # ~3–5 месяцев на 1m
+LIMIT = 5000  # ~3-5 месяцев на 1m
 
-# Порог роста для метки (в %)
-PROFIT_THRESHOLD = 0.15  # 0.15% за 2–3 свечи — реалистично для скальпинга
+PROFIT_THRESHOLD = 0.18  # чуть повыше, чтобы сигналы были качественнее
 
-# Папка для моделей
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -45,16 +45,13 @@ def prepare_data(candles, tf):
     X = []
     y = []
 
-    # Начинаем с индекса, где можно смотреть вперёд на 3 свечи
     for i in range(len(df) - 4):
-        current = df.iloc[i + 1]  # текущая свеча (предсказываем её исход)
-        future_close = df.iloc[i + 3]["close"]  # цена через ~2–3 свечи
+        current = df.iloc[i + 1]
+        future_close = df.iloc[i + 3]["close"]
 
-        # Метка: выросла ли цена достаточно
         price_change = (future_close - current["close"]) / current["close"] * 100
         label = 1 if price_change > PROFIT_THRESHOLD else 0
 
-        # Признаки из предыдущей свечи
         prev = df.iloc[i]
         features = build_features_single(prev, current, scale)
 
@@ -66,48 +63,49 @@ def prepare_data(candles, tf):
 
 def train_and_save():
     for tf in TIMEFRAMES:
-        print(f"\nОбучение модели для {tf} минута...")
+        print(f"\n=== Обучение модели для {tf}-минутного таймфрейма ===")
         interval = INTERVALS[tf]
         all_X = []
         all_y = []
 
         for symbol in SYMBOLS:
             try:
-                logging.info(f"Загрузка {symbol} {interval}")
+                logging.info(f"Загрузка {symbol} {interval}...")
                 candles = get_candles_binance(symbol, interval=interval, limit=LIMIT)
                 if len(candles) < 100:
                     continue
 
                 X, y = prepare_data(candles, tf)
-                if X is not None:
+                if X is not None and len(X) > 0:
                     all_X.extend(X)
                     all_y.extend(y)
-                    logging.info(f"{symbol}: добавлено {len(X)} примеров")
+                    print(f"  {symbol}: +{len(X)} примеров (всего: {len(all_X)})")
             except Exception as e:
                 logging.error(f"Ошибка с {symbol}: {e}")
 
-        if len(all_X) < 100:
-            logging.warning(f"Недостаточно данных для {tf}m")
+        if len(all_X) < 500:
+            print(f"Недостаточно данных для {tf}m — пропускаем")
             continue
 
         X = np.array(all_X)
         y = np.array(all_y)
 
-        # Балансировка классов (опционально)
-        from sklearn.utils import resample
-        pos = X[y == 1]
-        neg = X[y == 0]
-        if len(pos) < len(neg):
-            pos = resample(pos, replace=True, n_samples=len(neg), random_state=42)
-        elif len(neg) < len(pos):
-            neg = resample(neg, replace=True, n_samples=len(pos), random_state=42)
-        X_bal = np.vstack((pos, neg))
-        y_bal = np.array([1] * len(pos) + [0] * len(neg))
+        # Балансировка классов
+        pos_idx = y == 1
+        neg_idx = y == 0
+        if pos_idx.sum() < neg_idx.sum():
+            X_pos = resample(X[pos_idx], replace=True, n_samples=neg_idx.sum(), random_state=42)
+            X_bal = np.vstack((X_pos, X[neg_idx]))
+            y_bal = np.array([1] * neg_idx.sum() + [0] * neg_idx.sum())
+        else:
+            X_neg = resample(X[neg_idx], replace=True, n_samples=pos_idx.sum(), random_state=42)
+            X_bal = np.vstack((X[pos_idx], X_neg))
+            y_bal = np.array([1] * pos_idx.sum() + [0] * pos_idx.sum())
 
         # Обучение
         model = RandomForestClassifier(
-            n_estimators=300,
-            max_depth=8,
+            n_estimators=400,
+            max_depth=10,
             min_samples_split=10,
             class_weight="balanced",
             random_state=42,
@@ -115,17 +113,16 @@ def train_and_save():
         )
         model.fit(X_bal, y_bal)
 
-        # Оценка
         preds = model.predict(X_bal)
-        print(f"\n{tf}m — Отчёт:")
+        print(f"\n{tf}m — Результат на обучающей выборке:")
         print(classification_report(y_bal, preds))
 
         # Сохранение
         path = os.path.join(MODEL_DIR, f"model_{tf}m.joblib")
         joblib.dump(model, path)
-        logging.info(f"Модель {tf}m сохранена: {path}")
+        print(f"Модель сохранена: {path}")
 
-    print("\nОбучение завершено!")
+    print("\nОбучение всех моделей завершено!")
 
 
 if __name__ == "__main__":

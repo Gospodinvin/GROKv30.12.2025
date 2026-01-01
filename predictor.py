@@ -18,7 +18,10 @@ from indicators import (
     compute_ema,
     compute_stochastic,
     compute_adx_strength,
-    scalping_strategy
+    scalping_strategy,
+    compute_atr,
+    compute_cci,
+    compute_parabolic_sar
 )
 
 XAI_API_KEY = os.getenv("XAI_API_KEY")
@@ -40,27 +43,18 @@ async def call_grok(candles, patterns, regime, tf, symbol, indicators):
         f"RSI: {indicators['rsi']:.1f}\n"
         f"Stoch: {indicators.get('stoch', 50):.1f}\n"
         f"ADX: {indicators.get('adx', 20):.1f}\n"
-        f"MACD: {indicators['macd']:.5f}\n"
+        f"MACD: {indicators.get('macd', 0):.5f}\n"
         f"Bollinger: {indicators['bb']}\n"
-        f"EMA9: {indicators['ema']:.5f}"
     )
 
-    prompt = f"""Ты — профессиональный скальпер на Forex и крипте.
+    prompt = f"""Ты скальпер на Forex/крипте.
 
-Примеры:
-1. RSI=27, Stoch=18, паттерн=Hammer, тренд вверх → вероятность роста 0.78
-2. RSI=73, Stoch=85, паттерн=Shooting Star, тренд вниз → вероятность роста 0.25
-3. Doji в боковике, RSI=48 → вероятность роста 0.50
-
-Теперь анализируй:
-{symbol} {tf}мин | Режим: {regime}
-Свечи:
-{"\n".join(desc)}
+Анализируй {symbol} {tf}мин | Режим: {regime}
+Свечи (последние 10): {", ".join([f"{i+1}: O{recent[i]['open']:.2f} C{recent[i]['close']:.2f}" for i in range(len(recent))])}
 Паттерны: {", ".join(patterns) or "нет"}
-Индикаторы:
-{ind_desc}
+Индикаторы: RSI{indicators['rsi']:.1f}, Stoch{indicators['stoch']:.1f}, ADX{indicators['adx']:.1f}, MACD{indicators['macd']:.2f}, BB{indicators['bb']}, ATR{indicators['atr']:.4f}, CCI{indicators['cci']:.1f}, PSAR{indicators['psar']}
 
-Вероятность роста цены на 2–3 свечи вперёд? Ответь ТОЛЬКО числом от 0.00 до 1.00"""
+Вероятность роста на 2–3 свечи? Только число 0.00-1.00"""
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -70,47 +64,31 @@ async def call_grok(candles, patterns, regime, tf, symbol, indicators):
                 json={
                     "model": GROK_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 10
+                    "temperature": 0.2,
+                    "max_tokens": 8
                 }
             )
-            if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"]["content"].strip()
-                try:
-                    return float(content)
-                except ValueError:
-                    logging.warning(f"Grok вернул не число: {content}")
-                    return 0.5
-            else:
-                logging.error(f"Grok API error: {resp.status_code} {resp.text}")
+            if resp.status_code != 200:
+                logging.error(f"Grok error {resp.status_code}: {resp.text}")
+                return 0.5
+            txt = resp.json()["choices"][0]["message"]["content"].strip()
+            prob = float(txt) if txt.replace(".", "").isdigit() else 0.5
+            return prob
     except Exception as e:
-        logging.error(f"Ошибка вызова Grok: {e}")
+        logging.error(f"Grok exception: {e}")
+        return 0.5
 
-    return 0.5
-
-
-async def analyze(image_bytes=None, tf=None, symbol=None):
-    quality = 1.0
-    source = "CV-экстрактор"
+async def analyze(tf: str = "1", symbol: str = None, image_bytes: bytes = None):
+    source = "Скриншот"
+    quality = 0.0
+    candles = []
 
     if image_bytes:
-        try:
-            candles, quality = extract_candles(image_bytes)
-            if not candles:
-                return None, "Не удалось обнаружить свечи на изображении"
-            source = "Скриншот"
-        except Exception as e:
-            return None, f"Ошибка обработки изображения: {str(e)}"
+        candles, quality = extract_candles(image_bytes)
     else:
-        if not symbol or not tf:
-            return None, "Не указан символ или таймфрейм"
-        try:
-            interval = f"{tf}m" if tf in ["1", "2", "5", "10"] else "1h"  # пример
-            candles = get_candles(symbol, interval=interval, limit=70)
-            source = "Twelve Data / Binance"
-        except Exception as e:
-            return None, str(e)
-        quality = 1.0
+        interval = tf + "m" if tf != "10" else "1h"  # пример
+        candles = get_candles(symbol, interval=interval, limit=70)
+        source = "Twelve Data / Binance"
 
     if len(candles) < 5:
         return None, "Мало свечей"
@@ -126,7 +104,10 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         "ema": compute_ema(closes[-20:] if len(closes) >= 20 else closes),
         "closes": closes,
         "stoch": compute_stochastic(closes, highs, lows),
-        "adx": compute_adx_strength(highs, lows, closes)
+        "adx": compute_adx_strength(highs, lows, closes),
+        "atr": compute_atr(highs, lows, closes),
+        "cci": compute_cci(highs, lows, closes),
+        "psar": compute_parabolic_sar(highs, lows, closes),
     }
 
     features = build_features(candles, tf)
@@ -134,7 +115,9 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
         features = np.array([[0.1, 0.0, 0.1]])
 
     X = features[-1].reshape(1, -1)
-    ml_prob = get_model(tf).predict_proba(X)[0][1]
+    ml_probs = get_model(tf).predict_proba(X)[0]  # [prob_down, prob_neutral, prob_up]
+    ml_prob_up = ml_probs[2]  # Для старой логики
+    ml_prob_down = ml_probs[0]
 
     patterns, pattern_score = detect_patterns(candles)
 
@@ -156,13 +139,17 @@ async def analyze(image_bytes=None, tf=None, symbol=None):
     else:
         weights = [0.20, 0.30, 0.25, 0.25]
 
-    final_prob = np.dot(weights, [ml_prob, pattern_score, trend_prob, grok_prob])
+    final_prob_up = np.dot(weights, [ml_prob_up, pattern_score, trend_prob, grok_prob])
+    final_prob_down = np.dot(weights, [ml_prob_down, 1 - pattern_score, 1 - trend_prob, 1 - grok_prob])  # Симметрично
+    final_prob = final_prob_up - final_prob_down + 0.5  # Нормализуем к 0-1
 
-    conf_label, conf_score = confidence_from_probs([ml_prob, pattern_score, trend_prob, grok_prob])
+    conf_label, conf_score = confidence_from_probs([ml_prob_up, pattern_score, trend_prob, grok_prob, ml_prob_down])  # Добавил down
 
     return {
-        "prob": round(final_prob, 3),
-        "down_prob": round(1 - final_prob, 3),
+        "prob": round(final_prob, 3),  # Net prob up
+        "down_prob": round(final_prob_down, 3),  # Explicit down
+        "up_prob": round(final_prob_up, 3),     # Explicit up
+        "neutral_prob": round(1 - final_prob_up - final_prob_down, 3),
         "confidence": conf_label,
         "confidence_score": conf_score,
         "regime": regime,

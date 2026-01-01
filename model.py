@@ -26,14 +26,17 @@ class CandleModel:
 
     def predict_proba(self, X):
         if X.shape[0] == 0:
-            return np.array([[0.5, 0.5]])
+            return np.array([[0.333, 0.333, 0.333]])  # Для 3 классов
 
         if not self.fallback and self.model is not None:
-            return self.model.predict_proba(X)
+            probs = self.model.predict_proba(X)
+            # Порядок классов: [-1, 0, 1] (падение, нейтрал, рост)
+            return probs
 
-        # Fallback (на всякий случай)
+        # Fallback multiclass
         momentum = X[:, 0]
         volatility = X[:, 2]
-        prob_up = 0.5 + 0.4 * np.tanh(momentum) - 0.2 * volatility
-        prob_up = np.clip(prob_up, 0.05, 0.95)
-        return np.vstack([1 - prob_up, prob_up]).T
+        prob_up = np.clip(0.333 + 0.3 * np.tanh(momentum) - 0.15 * volatility, 0.05, 0.9)
+        prob_down = np.clip(0.333 - 0.3 * np.tanh(momentum) + 0.15 * volatility, 0.05, 0.9)
+        prob_neutral = 1 - prob_up - prob_down
+        return np.vstack([prob_down, prob_neutral, prob_up]).T

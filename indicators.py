@@ -71,6 +71,58 @@ def compute_adx_strength(highs, lows, closes, period=14):
     dx = abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9) * 100
     return dx
 
+def compute_atr(highs, lows, closes, period=14):
+    if len(highs) < period + 1:
+        return 0.0
+    tr = np.maximum(
+        highs[1:] - lows[1:],
+        np.maximum(abs(highs[1:] - closes[:-1]), abs(lows[1:] - closes[:-1]))
+    )
+    return np.mean(tr[-period:])
+
+def compute_cci(highs, lows, closes, period=20):
+    if len(closes) < period:
+        return 0.0
+    tp = (np.array(highs) + np.array(lows) + np.array(closes)) / 3
+    sma_tp = np.mean(tp[-period:])
+    mad = np.mean(np.abs(tp[-period:] - sma_tp))
+    return (tp[-1] - sma_tp) / (0.015 * mad + 1e-9)
+
+def compute_parabolic_sar(highs, lows, closes, af_step=0.015, af_max=0.2):
+    if len(closes) < 2:
+        return "neutral"
+    sar = lows[0]
+    ep = highs[0]
+    af = 0.015
+    trend = 1  # 1 up, -1 down
+    for i in range(1, len(closes)):
+        sar = sar + af * (ep - sar)
+        if trend > 0:
+            if lows[i] < sar:
+                trend = -1
+                sar = ep
+                ep = lows[i]
+                af = 0.015
+            else:
+                if highs[i] > ep:
+                    ep = highs[i]
+                    af = min(af + af_step, af_max)
+        else:
+            if highs[i] > sar:
+                trend = 1
+                sar = ep
+                ep = highs[i]
+                af = 0.015
+            else:
+                if lows[i] < ep:
+                    ep = lows[i]
+                    af = min(af + af_step, af_max)
+    if trend > 0:
+        return "up"
+    elif trend < 0:
+        return "down"
+    return "neutral"
+
 def scalping_strategy(indicators, patterns, regime):
     adj = 0.0
     rsi = indicators['rsi']
@@ -80,6 +132,9 @@ def scalping_strategy(indicators, patterns, regime):
     price = indicators['closes'][-1]
     stoch = indicators.get('stoch', 50)
     adx = indicators.get('adx', 20)
+    atr = indicators.get('atr', 0.01)  # Новый
+    cci = indicators.get('cci', 0)     # Новый
+    psar = indicators.get('psar', 'neutral')  # Новый
 
     # Buy signals
     if rsi < 30 and any(p in patterns for p in ["Hammer", "Pinbar", "Morning Star", "Bullish Harami"]):
@@ -90,6 +145,12 @@ def scalping_strategy(indicators, patterns, regime):
         adj += 0.15
     if stoch < 20 and adx > 25:
         adj += 0.12
+    if cci < -100:  # Новый
+        adj += 0.10
+    if psar == "up":  # Новый
+        adj += 0.08
+    if atr > 0.005:  # Волатильность для входа
+        adj += 0.05
 
     # Sell signals
     if rsi > 70 and any(p in patterns for p in ["Shooting Star", "Evening Star", "Bearish Harami"]):
@@ -100,8 +161,17 @@ def scalping_strategy(indicators, patterns, regime):
         adj -= 0.15
     if stoch > 80 and adx > 25:
         adj -= 0.12
+    if cci > 100:  # Новый
+        adj -= 0.10
+    if psar == "down":  # Новый
+        adj -= 0.08
+    if atr > 0.005:  # Волатильность усиливает sell в volatile
+        if regime == "volatile":
+            adj -= 0.05
 
     if regime == "volatile":
         adj *= 1.2
+    elif regime == "flat":
+        adj *= 0.8  # Снижаем в flat
 
-    return np.clip(adj, -0.3, 0.3)
+    return np.clip(adj, -0.4, 0.4)  # Расширили range

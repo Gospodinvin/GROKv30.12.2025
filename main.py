@@ -9,6 +9,9 @@ from state import TTLState
 from predictor import analyze
 import logging
 
+from flask import Flask  # Новый импорт
+import threading
+
 state = TTLState(STATE_TTL_SECONDS)
 
 async def start(m: Message):
@@ -85,14 +88,15 @@ async def callback_handler(cb: CallbackQuery):
 
 async def send_result(message: Message, res: dict):
     prob = res["prob"]
-    growth_percent = int(prob * 100)
-    down_percent = 100 - growth_percent
+    growth_percent = int(res["up_prob"] * 100)
+    down_percent = int(res["down_prob"] * 100)
+    neutral_percent = int(res["neutral_prob"] * 100)
 
     # Определяем рекомендацию
-    if prob >= 0.65:
+    if res["up_prob"] >= 0.65:
         recommendation = "🟢 **BUY** (Покупать)"
         color = "🟢"
-    elif prob <= 0.35:
+    elif res["down_prob"] >= 0.65:
         recommendation = "🔴 **SELL** (Продавать)"
         color = "🔴"
     else:
@@ -104,6 +108,7 @@ async def send_result(message: Message, res: dict):
         f"{color} **Рекомендация:** {recommendation}\n"
         f"Рост (2–3 свечи): **{growth_percent}%**\n"
         f"Падение: **{down_percent}%**\n"
+        f"Нейтрал: **{neutral_percent}%**\n"
         f"Уверенность: **{res['confidence']}** ({res['confidence_score']})\n"
         f"Режим рынка: {res['regime'].capitalize()}\n"
         f"Источник: {res['source']}\n"
@@ -123,6 +128,9 @@ async def send_result(message: Message, res: dict):
         f"• ADX (сила тренда): {ind.get('adx', 20):.1f}\n"
         f"• MACD: {ind.get('macd', 0):.5f}\n"
         f"• Bollinger: {ind.get('bb', 'neutral').capitalize()}\n"
+        f"• ATR: {ind.get('atr', 0.01):.4f}\n"
+        f"• CCI: {ind.get('cci', 0):.1f}\n"
+        f"• PSAR: {ind.get('psar', 'neutral').capitalize()}\n"
     )
 
     txt += "\n⚠ **Не финансовая рекомендация! Торгуйте на свой страх и риск.**"
@@ -136,8 +144,19 @@ def main():
     dp.message.register(image_handler, F.content_type.in_({ContentType.PHOTO, ContentType.DOCUMENT}))
     dp.callback_query.register(callback_handler)
     print("Бот запущен — версия со скальпингом и индикаторами!")
+
+    app = Flask(__name__)
+
+    @app.route('/health')
+    def health():
+        return "OK", 200
+
+    def run_flask():
+        app.run(host='0.0.0.0', port=8080)
+
+    threading.Thread(target=run_flask).start()
+
     dp.run_polling(bot)
 
 if __name__ == "__main__":
     main()
-
